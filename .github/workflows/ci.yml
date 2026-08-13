@@ -15,8 +15,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: uv pip install --system -e ".[dev]"
+      # Into a virtualenv, not --system: setup-uv provides a uv-managed
+      # interpreter that refuses to be installed into.
+      - run: uv venv
+      - run: uv pip install -e ".[dev]"
 
       # No backend, no database, no API keys: the RAG service is replaced by an
       # httpx MockTransport and the store is in-memory SQLite.
-      - run: pytest -q
+      - run: uv run pytest -q
