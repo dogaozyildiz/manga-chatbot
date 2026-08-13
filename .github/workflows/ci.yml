@@ -15,9 +15,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Into a virtualenv, not --system: setup-uv provides a uv-managed
-      # interpreter that refuses to be installed into.
-      - run: uv venv
+      # setup-uv already creates and exports a .venv, so this installs into it.
+      # Not `--system`: the uv-managed interpreter refuses to be installed into.
       - run: uv pip install -e ".[dev]"
 
       # No backend, no database, no API keys: the RAG service is replaced by an
