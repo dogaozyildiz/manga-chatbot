@@ -83,8 +83,21 @@ def _make_handler(services: Services):
         except Exception:
             pass
 
+        # Operator-visible traffic. Without it a successful message logs
+        # nothing at all, and "handled fine" is indistinguishable from "never
+        # arrived" — which is exactly the question you ask when a bot seems
+        # silent.
+        log.info("<- %s: %s", chat_id, message.text[:80])
+
         reply = await services.conversation.handle(
             Channel.TELEGRAM, chat_id, message.text, display_name=display_name
+        )
+        log.info(
+            "-> %s: %d chars, %d sources%s",
+            chat_id,
+            len(reply.body),
+            len(reply.citations),
+            ", escalated" if reply.escalated else "",
         )
         await message.reply_text(
             render(
