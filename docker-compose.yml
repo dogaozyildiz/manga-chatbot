@@ -1,0 +1,35 @@
+# Two processes, one image. They are separate services rather than one because
+# Telegram polls and WhatsApp is pushed to: neither should be able to take the
+# other down, and Telegram must run with WhatsApp entirely unconfigured.
+#
+# RAG_URL points at the host because manhwa-rag runs in its own compose project.
+services:
+  telegram:
+    build: .
+    command: python -m bot.telegram_main
+    env_file: .env
+    environment:
+      RAG_URL: ${RAG_URL:-http://host.docker.internal:8000}
+      DATABASE_URL: sqlite+aiosqlite:////data/manga_chatbot.db
+    volumes:
+      - botdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  webhook:
+    build: .
+    env_file: .env
+    environment:
+      RAG_URL: ${RAG_URL:-http://host.docker.internal:8000}
+      DATABASE_URL: sqlite+aiosqlite:////data/manga_chatbot.db
+    ports:
+      - "8080:8080"
+    volumes:
+      - botdata:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  botdata:

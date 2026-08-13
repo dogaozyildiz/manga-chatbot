@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manga-chatbot"
+version = "0.1.0"
+description = "Telegram and WhatsApp chatbot over the manhwa-rag catalogue, with verified citations, preference capture and human escalation"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    # The Telegram transport. Long polling in the demo, so no public URL is
+    # needed for the channel that matters most.
+    "python-telegram-bot>=21",
+    "httpx",
+    "tenacity",
+    "pydantic-settings",
+    # Preference capture. SQLite by default because a portfolio bot should run
+    # with no infrastructure; the URL is swappable for Postgres.
+    "sqlalchemy[asyncio]",
+    "aiosqlite",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["bot*"]

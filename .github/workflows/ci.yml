@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - run: uv pip install --system -e ".[dev]"
+
+      # No backend, no database, no API keys: the RAG service is replaced by an
+      # httpx MockTransport and the store is in-memory SQLite.
+      - run: pytest -q
