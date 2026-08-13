@@ -1,9 +1,9 @@
-# Manga chatbot — Telegram + WhatsApp
+# Manga chatbot — Telegram, Discord, WhatsApp
 
-A chat interface to a manga/manhwa catalogue, on the two channels people
-actually message from. Every answer is grounded in a retrieval backend that
-verifies its own citations, and the bot hands off to a human rather than
-guessing when that backend says it has nothing.
+A chat interface to a manga/manhwa catalogue, on the channels people actually
+message from. Every answer is grounded in a retrieval backend that verifies its
+own citations, and the bot hands off to a human rather than guessing when that
+backend says it has nothing.
 
 The interesting part is what this repo *doesn't* contain. There is no prompt
 engineering here, no vector store, no retrieval logic. All of that lives in
@@ -13,10 +13,11 @@ the channel layer over it — and keeping it a channel layer is the design.
 
 ```
 Telegram (long polling) ──┐
-                          ├──► conversation.py ──► rag.py ──► manhwa-rag POST /ask
-WhatsApp (Cloud API) ─────┘    (channel-agnostic)     │
-                                     │                └── 503 ──► POST /retrieve
-                                     │                            (no key needed)
+Discord (slash commands) ─┼──► conversation.py ──┬─► rag.py ────► manhwa-rag POST /ask
+WhatsApp (Cloud API) ─────┘   (channel-agnostic) │        └─ 503 ─► POST /retrieve
+                                     │           │                  (no key needed)
+                                     │           └─► communities.py ─► Reddit search API
+                                     │
                                      ├──► store.py       SQLite: subscribers, escalations
                                      └──► escalation.py  refused → notify a human
 ```
@@ -49,7 +50,18 @@ chapters can come back, and the user can see why.
 contact, and stores it. The pending step lives in a database column rather than
 process memory, so a restart mid-flow doesn't lose the thread.
 
-**4. Escalation that means something.**
+**4. Community suggestions that are looked up, not invented.**
+`/communities Solo Leveling` returns real subreddits with their current member
+counts and descriptions, straight from Reddit's search API. This is the one
+feature whose data the catalogue does not hold — it knows about series, not
+about where people discuss them — so it was either going to be the project's
+first hallucination or a lookup. A model asked to name subreddits will produce
+plausible ones that do not exist. With no Reddit credentials configured the
+command says so; it never falls back to guessing. And a Reddit outage reports
+itself as an outage rather than as "no communities exist", because those are
+different facts.
+
+**5. Escalation that means something.**
 `refused` is computed by the backend and covers three cases: nothing retrieved,
 the model declined, or *every claim it made failed verification*. That last one
 catches answers that looked fine and weren't. When it fires, the bot says it
@@ -96,7 +108,23 @@ To have escalations pushed to you, set `ADMIN_CHAT_ID` to your own chat id
 (message [@userinfobot](https://t.me/userinfobot) to find it). Left empty,
 escalations are still recorded, just not pushed.
 
-### 4. WhatsApp (optional)
+### 4. Discord (optional)
+
+Create an application at [discord.com/developers](https://discord.com/developers/applications),
+add a bot, copy the token into `DISCORD_BOT_TOKEN`. Free, no approval, and no
+verification until the bot is in 100 servers.
+
+Invite it with the `bot` and `applications.commands` scopes, put the server id
+in `DISCORD_GUILD_ID` so commands appear instantly, then:
+
+```bash
+python -m bot.discord_main
+```
+
+`/ask`, `/communities`, `/subscribe`, `/status`, `/stop`, `/help`. Leave every
+privileged intent switched **off** — the bot does not need any.
+
+### 5. WhatsApp (optional)
 
 ```bash
 uvicorn bot.api:app --port 8080
@@ -118,6 +146,26 @@ characters wherever they appear, including `.`, `-` and `!`. Manga titles are
 full of them, and one missed escape makes Telegram reject the entire message —
 so the failure mode is the bot silently saying nothing. HTML has three escapes
 and no such trap.
+
+**Discord uses slash commands only, and that is a design choice.** Reading
+ordinary message text needs the Message Content privileged intent, which must be
+toggled on and re-applied for annually past 10,000 users. An interaction carries
+its own arguments, so the bot runs on `Intents.none()` — no privileged intents at
+all. The cost is that the multi-step `/subscribe` flow cannot span messages, so
+Discord collects both answers as command parameters and feeds them through the
+same state machine the other channels use rather than duplicating it.
+
+**Every Discord command defers before working.** Discord discards an interaction
+that is not acknowledged within 3 seconds, and a catalogue answer takes 2–4. So
+each command calls `defer()` and replies through `followup`. There is a test
+asserting the deferral happens *before* the slow call, because getting that
+order wrong fails only under real latency.
+
+**Message limits are platform facts, not settings.** Discord caps a message at
+2000 characters — less than half of Telegram's 4096 — and rejects anything
+longer outright instead of truncating. So the ceilings live in `format.py` keyed
+by channel, and the body is trimmed to whatever the sources leave rather than
+the sources being cut.
 
 **The WhatsApp webhook returns 200 before doing the work.** Meta retries a
 webhook it considers slow, and an answer takes 2–4 seconds. Answering
@@ -143,13 +191,14 @@ pretends to forget them is a liability.
 ## Tests
 
 ```bash
-pytest -q      # 99 tests
+pytest -q      # 164 tests
 ```
 
-No network, no API keys, no database server. The backend is an
+No network, no API keys, no database server. The backend and Reddit are both
 `httpx.MockTransport` and the store is in-memory SQLite, so CI runs the real
-conversation logic — including the 503 fallback, redelivery suppression and
-HTML-escaping paths — without a manhwa-rag to talk to.
+conversation logic — the 503 fallback, redelivery suppression, HTML and markdown
+escaping, token refresh, and Discord's defer-before-work ordering — without a
+manhwa-rag or a bot token to talk to.
 
 ---
 
@@ -167,3 +216,15 @@ HTML-escaping paths — without a manhwa-rag to talk to.
   set rather than one right answer.
 - **Alerts are captured, not sent.** `/subscribe` stores what a user follows;
   the job that watches for new chapters and notifies them is not built.
+- **Discord *servers* are not recommended, only subreddits.** There is no
+  sanctioned API for discovering servers a bot has not joined — Discord's own
+  OpenAPI spec exposes 150 endpoints and every search route (`threads/search`,
+  `members/search`, `messages/search`) operates inside a guild you are already
+  in. Client-side Server Discovery runs on undocumented user-API endpoints that
+  require a user token, which is self-botting and a terms violation. So the
+  honest answer is subreddits, from live data, rather than a made-up server list.
+- **Reddit API access needs approval.** Under Reddit's Responsible Builder
+  Policy, access must be requested and granted before use. `/communities`
+  degrades to explaining itself when credentials are absent.
+- **Subreddit results are Reddit's search ranking**, not a taste model. The bot
+  reports what Reddit returns, ordered by size.

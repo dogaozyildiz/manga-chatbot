@@ -13,6 +13,8 @@ dependencies = [
     # The Telegram transport. Long polling in the demo, so no public URL is
     # needed for the channel that matters most.
     "python-telegram-bot>=21",
+    # Discord, via slash commands only — so no privileged intents are needed.
+    "discord.py>=2.7",
     "httpx",
     "tenacity",
     "pydantic-settings",

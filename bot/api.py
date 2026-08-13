@@ -10,35 +10,13 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
 
 from bot.channels.whatsapp import WhatsAppSender, build_router
-from bot.config import Settings
+from bot.escalation import telegram_notifier
 from bot.services import Services
 
 log = logging.getLogger(__name__)
-
-
-def _telegram_notifier(settings: Settings):
-    """Push escalations to the operator's Telegram, even from this process.
-
-    A WhatsApp conversation still needs a human somewhere, and the operator
-    already has a Telegram chat with the bot. Posting straight to the Bot API
-    avoids standing up a second `Application` just to send one message.
-    """
-    if not (settings.telegram_bot_token and settings.admin_chat_id):
-        return None
-
-    async def notify(text: str) -> None:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                f"https://api.telegram.org/bot{settings.telegram_bot_token}"
-                "/sendMessage",
-                json={"chat_id": settings.admin_chat_id, "text": text},
-            )
-
-    return notify
 
 
 def create_app(services: Services | None = None) -> FastAPI:
@@ -48,7 +26,7 @@ def create_app(services: Services | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await services.start()
-        notifier = _telegram_notifier(services.settings)
+        notifier = telegram_notifier(services.settings)
         if notifier:
             services.escalator.set_notifier(notifier)
         if not services.settings.whatsapp_configured:

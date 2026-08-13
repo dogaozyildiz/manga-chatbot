@@ -14,10 +14,36 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+import httpx
+
+from bot.config import Settings
 from bot.schema import RagAnswer
 from bot.store import Store
 
 Notifier = Callable[[str], Awaitable[None]]
+
+
+def telegram_notifier(settings: Settings) -> Notifier | None:
+    """Push escalations to the operator's Telegram from any process.
+
+    Whichever channel a user is on, the human who has to answer is the same
+    person, and they already have a Telegram chat with the bot. Posting
+    straight to the Bot API avoids standing up a second client just to send one
+    message. Returns None when no operator is configured, which is a supported
+    setup — escalations are still recorded.
+    """
+    if not (settings.telegram_bot_token and settings.admin_chat_id):
+        return None
+
+    async def notify(text: str) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+                "/sendMessage",
+                json={"chat_id": settings.admin_chat_id, "text": text},
+            )
+
+    return notify
 
 
 def reason_for(answer: RagAnswer) -> str | None:

@@ -163,3 +163,71 @@ class TestTruncation:
         assert out.count("<a href") == out.count("</a>")
         assert out.count("<b>") == out.count("</b>")
         assert out.count("<i>") == out.count("</i>")
+
+
+class TestDiscordAndReddit:
+    def test_discord_uses_markdown_not_html(self):
+        out = render(Reply(body="x", filters=["Korean"]), Channel.DISCORD)
+        assert "*Filtered on: Korean*" in out
+        assert "<i>" not in out
+
+    def test_discord_suppresses_link_embeds(self):
+        """Four sources would otherwise stack four preview cards."""
+        out = render(Reply(body="x", citations=[citation()]), Channel.DISCORD)
+        assert "[Rosen Blood](<https://anilist.co/manga/1>)" in out
+
+    def test_reddit_uses_a_plain_markdown_link(self):
+        out = render(Reply(body="x", citations=[citation()]), Channel.REDDIT)
+        assert "[Rosen Blood](https://anilist.co/manga/1)" in out
+        assert "(<" not in out
+
+    def test_markdown_in_titles_is_escaped(self):
+        """API-sourced text routinely contains * and _."""
+        out = render(
+            Reply(body="x", citations=[citation(title="a_b*c", url=None)]),
+            Channel.DISCORD,
+        )
+        assert "a\\_b\\*c" in out
+
+    def test_markdown_in_quotes_is_escaped(self):
+        out = render(
+            Reply(body="x", citations=[citation(quote="read *this* now")]),
+            Channel.REDDIT,
+        )
+        assert "\\*this\\*" in out
+
+    def test_body_is_not_html_escaped(self):
+        out = render(Reply(body="a < b & c"), Channel.DISCORD)
+        assert "a < b & c" in out
+
+    def test_source_without_url_falls_back_to_bold(self):
+        out = render(
+            Reply(body="x", citations=[citation(url=None)]), Channel.DISCORD
+        )
+        assert "**Rosen Blood**" in out
+
+
+class TestChannelLimits:
+    def test_discord_defaults_to_2000(self):
+        """Discord's ceiling is under half of everyone else's, and a message
+        over it is rejected outright rather than trimmed."""
+        out = render(Reply(body="word " * 3000), Channel.DISCORD)
+        assert len(out) <= 2000
+
+    def test_reddit_allows_long_replies(self):
+        out = render(Reply(body="word " * 3000), Channel.REDDIT)
+        assert 4096 < len(out) <= 10000
+
+    def test_telegram_defaults_to_4096(self):
+        out = render(Reply(body="word " * 3000), Channel.TELEGRAM)
+        assert 2000 < len(out) <= 4096
+
+    def test_explicit_override_still_wins(self):
+        out = render(Reply(body="word " * 3000), Channel.DISCORD, max_chars=500)
+        assert len(out) <= 500
+
+    def test_discord_sources_survive_the_tighter_limit(self):
+        reply = Reply(body="word " * 3000, citations=[citation()])
+        out = render(reply, Channel.DISCORD)
+        assert "Rosen Blood" in out
+        assert len(out) <= 2000

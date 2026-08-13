@@ -8,6 +8,9 @@ without a network or a bot token.
 
 from __future__ import annotations
 
+import re
+
+from bot.communities import CommunityLookupError, RedditCommunities
 from bot.escalation import Escalator, reason_for
 from bot.ratelimit import RateLimiter
 from bot.rag import RagClient
@@ -16,6 +19,29 @@ from bot.store import Store
 
 AWAITING_TITLES = "awaiting_titles"
 AWAITING_CONTACT = "awaiting_contact"
+
+# Phrasings that mean "where do I discuss this", not "tell me about this".
+# Checked before the question path so they reach Reddit rather than the
+# catalogue, which has nothing to say about communities.
+_COMMUNITY_RE = re.compile(
+    r"\b(subreddit|subreddits|reddit|communit(?:y|ies)|"
+    r"where (?:can i|do people|should i) (?:discuss|talk|go))\b",
+    re.I,
+)
+
+# Stripped to leave the series name behind: "subreddit for Solo Leveling"
+# becomes "Solo Leveling".
+_COMMUNITY_STRIP_RE = re.compile(
+    r"\b(?:where (?:can i|do people|should i) (?:discuss|talk about|talk|go)|"
+    r"any |good |best |find me |show me |recommend |suggest |"
+    r"subreddits?|reddit|communit(?:y|ies)|for|about|on|to|discuss(?:ing)?)\b",
+    re.I,
+)
+
+# Only ever stripped from the start of the remainder — see _strip_community_words.
+_LEADING_NOISE_RE = re.compile(
+    r"^(?:which|what'?s?|is|are|there|some|me|do|you|know|got|i|can)\b\s*", re.I
+)
 
 WELCOME = (
     "Manga catalogue assistant.\n\n"
@@ -26,6 +52,7 @@ WELCOME = (
     "• completed romance manhwa under 100 chapters\n"
     "• recommend something like Solo Leveling\n"
     "• what is scanlation?\n\n"
+    "/communities <series> — real subreddits to discuss it\n"
     "/subscribe — get update alerts\n"
     "/help — what else I can do"
 )
@@ -36,11 +63,32 @@ HELP = (
     "I handle real constraints, not just keywords: \"completed romance manhwa "
     "under 100 chapters\" becomes an actual filter, so nothing over 100 "
     "chapters comes back.\n\n"
+    "/communities <series> — real subreddits where it's discussed, looked up "
+    "live rather than invented\n"
     "/subscribe — tell me what you read, get update alerts\n"
     "/stop — delete everything I've stored about you\n"
     "/status — what I've got on file\n"
     "/cancel — back out of the current question"
 )
+
+
+def _strip_community_words(text: str) -> str:
+    """Leave the series name behind.
+
+    "where can I discuss Solo Leveling" -> "Solo Leveling". An empty result is
+    fine and meaningful: a bare "any subreddits?" falls back to whatever series
+    the user has already told us they read.
+    """
+    stripped = _COMMUNITY_STRIP_RE.sub(" ", text)
+    stripped = re.sub(r"[?!.]+", " ", stripped)
+    stripped = re.sub(r"\s+", " ", stripped).strip(" ,;:-")
+
+    # Question words are only stripped from the front. Removing them anywhere
+    # would maul real titles — "The Beginning After The End" would lose two
+    # words, and "What's Wrong with Secretary Kim" its first.
+    while (shorter := _LEADING_NOISE_RE.sub("", stripped)) != stripped:
+        stripped = shorter
+    return stripped.strip(" ,;:-")
 
 
 class Conversation:
@@ -50,11 +98,15 @@ class Conversation:
         store: Store,
         escalator: Escalator,
         limiter: RateLimiter | None = None,
+        communities: RedditCommunities | None = None,
     ) -> None:
         self._rag = rag
         self._store = store
         self._escalator = escalator
         self._limiter = limiter or RateLimiter()
+        # Optional: with no Reddit credentials the bot still answers questions,
+        # and /communities explains itself instead of failing.
+        self._communities = communities
 
     async def handle(
         self, channel: Channel, user_id: str, text: str, *, display_name: str = ""
@@ -71,6 +123,13 @@ class Conversation:
         pending = await self._store.pending_state(channel.value, user_id)
         if pending:
             return await self._capture(channel, user_id, text, pending)
+
+        # "which subreddit for Solo Leveling" is a lookup, not a catalogue
+        # question — the catalogue has no idea what a subreddit is.
+        if _COMMUNITY_RE.search(text):
+            return await self._communities_for(
+                channel, user_id, _strip_community_words(text)
+            )
 
         return await self._question(channel, user_id, text)
 
@@ -118,6 +177,10 @@ class Conversation:
         if command == "status":
             return await self._status(channel, user_id)
 
+        if command in ("communities", "community", "where"):
+            _, _, argument = text.partition(" ")
+            return await self._communities_for(channel, user_id, argument.strip())
+
         return Reply(body=f"I don't know /{command}. Try /help.")
 
     async def _status(self, channel: Channel, user_id: str) -> Reply:
@@ -129,6 +192,50 @@ class Conversation:
         lines.append(f"• contact: {subscriber.contact or '(none)'}")
         lines.append("\n/stop deletes all of it.")
         return Reply(body="\n".join(lines))
+
+    # -- communities -------------------------------------------------------
+
+    async def _communities_for(
+        self, channel: Channel, user_id: str, query: str
+    ) -> Reply:
+        if self._communities is None or not self._communities.configured:
+            return Reply(
+                body=(
+                    "Community lookup isn't switched on — it needs Reddit API "
+                    "credentials. Ask me about the catalogue instead."
+                )
+            )
+
+        if not query:
+            # Fall back to what they already told us they read.
+            subscriber = await self._store.get(channel.value, user_id)
+            query = (subscriber.titles if subscriber else "") or ""
+            query = query.split(",")[0].strip()
+        if not query:
+            return Reply(body="Which series? Try: /communities Solo Leveling")
+
+        denial = self._limiter.check(f"{channel.value}:{user_id}")
+        if denial:
+            return Reply(body=denial)
+
+        try:
+            found = await self._communities.search(query)
+        except CommunityLookupError:
+            return Reply(
+                body=(
+                    "I couldn't reach Reddit just now, so I'd rather not guess "
+                    "at community names. Try again shortly."
+                )
+            )
+
+        if not found:
+            return Reply(body=f"Nothing on Reddit matched “{query}”.")
+
+        return Reply(
+            body=f"Places to discuss {query}:",
+            citations=[community.as_citation() for community in found],
+            note="live from Reddit search — member counts are current",
+        )
 
     # -- preference capture ------------------------------------------------
 

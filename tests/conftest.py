@@ -16,6 +16,7 @@ from bot.conversation import Conversation
 from bot.escalation import Escalator
 from bot.rag import RagClient
 from bot.ratelimit import RateLimiter
+from bot.schema import Community
 from bot.store import Store
 
 RAG_BASE = "http://rag.test"
@@ -133,12 +134,45 @@ def open_limiter() -> RateLimiter:
     return RateLimiter(min_seconds=0.0, per_hour=10_000)
 
 
+class FakeCommunities:
+    """Stands in for `RedditCommunities` without any HTTP."""
+
+    def __init__(self, results=None, *, error=None, configured=True) -> None:
+        self._results = results or []
+        self._error = error
+        self._configured = configured
+        self.queries: list[str] = []
+
+    @property
+    def configured(self) -> bool:
+        return self._configured
+
+    async def search(self, query: str, limit: int = 4):
+        self.queries.append(query)
+        if self._error is not None:
+            raise self._error
+        return self._results[:limit]
+
+
+def community(name: str, subscribers: int = 1000, description: str = "") -> Community:
+    return Community(
+        name=name,
+        subscribers=subscribers,
+        description=description or f"About {name}.",
+        url=f"https://www.reddit.com/r/{name}/",
+    )
+
+
 @pytest.fixture
 async def make_conversation(store, make_rag, open_limiter):
-    def factory(handler, *, limiter=None, notifier=None) -> Conversation:
+    def factory(
+        handler, *, limiter=None, notifier=None, communities=None
+    ) -> Conversation:
         rag = make_rag(handler)
         escalator = Escalator(store, notifier)
-        return Conversation(rag, store, escalator, limiter or open_limiter)
+        return Conversation(
+            rag, store, escalator, limiter or open_limiter, communities
+        )
 
     return factory
 

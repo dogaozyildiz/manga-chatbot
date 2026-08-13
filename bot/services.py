@@ -8,6 +8,7 @@ whatever lifecycle hook it has (FastAPI's `lifespan`, PTB's `post_init`).
 
 from __future__ import annotations
 
+from bot.communities import RedditCommunities
 from bot.config import Settings, get_settings
 from bot.conversation import Conversation
 from bot.escalation import Escalator
@@ -30,8 +31,17 @@ class Services:
             min_seconds=self.settings.rate_limit_min_seconds,
             per_hour=self.settings.rate_limit_per_hour,
         )
+        self.communities = RedditCommunities(
+            self.settings.reddit_client_id,
+            self.settings.reddit_client_secret,
+            self.settings.reddit_user_agent,
+        )
         self.conversation = Conversation(
-            self.rag, self.store, self.escalator, self.limiter
+            self.rag,
+            self.store,
+            self.escalator,
+            self.limiter,
+            self.communities,
         )
 
     async def start(self) -> None:
@@ -39,4 +49,5 @@ class Services:
 
     async def close(self) -> None:
         await self.rag.aclose()
+        await self.communities.aclose()
         await self.store.close()

@@ -100,11 +100,7 @@ def _make_handler(services: Services):
             ", escalated" if reply.escalated else "",
         )
         await message.reply_text(
-            render(
-                reply,
-                Channel.TELEGRAM,
-                max_chars=services.settings.max_message_chars,
-            ),
+            render(reply, Channel.TELEGRAM),
             parse_mode=ParseMode.HTML,
             # Every answer carries source links; previews would bury the answer
             # under a stack of link cards.

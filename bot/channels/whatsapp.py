@@ -174,9 +174,7 @@ async def _process(
 ) -> None:
     try:
         reply = await services.conversation.handle(Channel.WHATSAPP, user_id, text)
-        body = render(
-            reply, Channel.WHATSAPP, max_chars=services.settings.max_message_chars
-        )
+        body = render(reply, Channel.WHATSAPP)
     except Exception:
         log.exception("failed handling whatsapp message")
         body = "Something broke on my side. It's logged — try again in a moment."

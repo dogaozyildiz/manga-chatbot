@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = ""
     whatsapp_api_version: str = "v21.0"
 
+    discord_bot_token: str = ""
+    # Commands registered to one guild appear instantly; global ones take up to
+    # an hour to propagate. Set this while developing.
+    discord_guild_id: str = ""
+
+    # Reddit, for looking up real communities. Search needs only app-only
+    # OAuth — no Reddit user account and no password.
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    # Reddit requires a descriptive User-Agent and forbids masking it.
+    reddit_user_agent: str = "python:manga-chatbot:v0.1 (by /u/unknown)"
+
     database_url: str = "sqlite+aiosqlite:///./manga_chatbot.db"
 
     # The backend has no auth and no rate limiting of its own, and says so:
@@ -38,9 +50,6 @@ class Settings(BaseSettings):
     rate_limit_min_seconds: float = 3.0
     rate_limit_per_hour: int = 20
 
-    # Telegram and WhatsApp both cap a text message at 4096 characters.
-    max_message_chars: int = 4096
-
     @property
     def whatsapp_configured(self) -> bool:
         return bool(
@@ -48,6 +57,14 @@ class Settings(BaseSettings):
             and self.whatsapp_phone_number_id
             and self.whatsapp_verify_token
         )
+
+    @property
+    def discord_configured(self) -> bool:
+        return bool(self.discord_bot_token)
+
+    @property
+    def communities_configured(self) -> bool:
+        return bool(self.reddit_client_id and self.reddit_client_secret)
 
 
 @lru_cache

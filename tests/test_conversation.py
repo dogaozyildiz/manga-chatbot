@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
+from bot.communities import CommunityLookupError
 from bot.ratelimit import RateLimiter
 from bot.schema import Channel
 
-from tests.conftest import ask_payload, json_handler, retrieve_payload, route_handler
+from tests.conftest import (
+    FakeCommunities,
+    ask_payload,
+    community,
+    json_handler,
+    retrieve_payload,
+    route_handler,
+)
 
 USER = "42"
 
@@ -247,6 +256,126 @@ class TestPreferenceCapture:
         assert await store.get(Channel.WHATSAPP.value, USER) is None
         reply = await conversation.handle(Channel.WHATSAPP, USER, "/status")
         assert "Nothing on file" in reply.body
+
+
+class TestCommunities:
+    async def test_returns_real_subreddits(self, make_conversation):
+        communities = FakeCommunities(
+            [community("manga", 3_000_000), community("manhwa", 400_000)]
+        )
+        conversation = make_conversation(
+            json_handler(ask_payload()), communities=communities
+        )
+        reply = await conversation.handle(
+            Channel.TELEGRAM, USER, "/communities Solo Leveling"
+        )
+
+        assert communities.queries == ["Solo Leveling"]
+        assert [c.title.split(" ·")[0] for c in reply.citations] == ["r/manga", "r/manhwa"]
+        assert reply.citations[0].url == "https://www.reddit.com/r/manga/"
+
+    async def test_member_counts_are_shown_compactly(self, make_conversation):
+        conversation = make_conversation(
+            json_handler(ask_payload()),
+            communities=FakeCommunities([community("manga", 3_000_000)]),
+        )
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities manga")
+        # A round number loses its trailing ".0" — "3M members", not "3.0M".
+        assert "3M members" in reply.citations[0].title
+
+    async def test_never_reaches_the_catalogue(self, store, make_rag, open_limiter):
+        """The catalogue knows nothing about subreddits, so it is not asked."""
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            return httpx.Response(200, json=ask_payload())
+
+        from bot.conversation import Conversation
+        from bot.escalation import Escalator
+
+        conversation = Conversation(
+            make_rag(handler),
+            store,
+            Escalator(store),
+            open_limiter,
+            FakeCommunities([community("manga")]),
+        )
+        await conversation.handle(Channel.TELEGRAM, USER, "/communities manga")
+        assert calls == []
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("which subreddit for Solo Leveling?", "Solo Leveling"),
+            ("where can I discuss Omniscient Reader", "Omniscient Reader"),
+            ("any communities about Berserk", "Berserk"),
+            ("recommend subreddits for Vinland Saga", "Vinland Saga"),
+        ],
+    )
+    async def test_natural_phrasing_is_routed(
+        self, make_conversation, text, expected
+    ):
+        communities = FakeCommunities([community("manga")])
+        conversation = make_conversation(
+            json_handler(ask_payload()), communities=communities
+        )
+        await conversation.handle(Channel.TELEGRAM, USER, text)
+        assert communities.queries == [expected]
+
+    async def test_falls_back_to_stored_titles(self, make_conversation):
+        communities = FakeCommunities([community("manga")])
+        conversation = make_conversation(
+            json_handler(ask_payload()), communities=communities
+        )
+        await conversation.handle(Channel.TELEGRAM, USER, "/subscribe")
+        await conversation.handle(
+            Channel.TELEGRAM, USER, "Solo Leveling, Omniscient Reader"
+        )
+        await conversation.handle(Channel.TELEGRAM, USER, "skip")
+
+        await conversation.handle(Channel.TELEGRAM, USER, "/communities")
+        assert communities.queries == ["Solo Leveling"]
+
+    async def test_asks_when_nothing_to_go_on(self, make_conversation):
+        conversation = make_conversation(
+            json_handler(ask_payload()), communities=FakeCommunities()
+        )
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities")
+        assert "which series" in reply.body.lower()
+        assert not reply.citations
+
+    async def test_unconfigured_explains_itself(self, make_conversation):
+        conversation = make_conversation(
+            json_handler(ask_payload()),
+            communities=FakeCommunities(configured=False),
+        )
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities manga")
+        assert "isn't switched on" in reply.body
+
+    async def test_missing_entirely_explains_itself(self, make_conversation):
+        conversation = make_conversation(json_handler(ask_payload()))
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities manga")
+        assert "isn't switched on" in reply.body
+
+    async def test_no_matches_says_so(self, make_conversation):
+        conversation = make_conversation(
+            json_handler(ask_payload()), communities=FakeCommunities([])
+        )
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities zzzz")
+        assert "Nothing on Reddit matched" in reply.body
+
+    async def test_outage_does_not_masquerade_as_no_results(self, make_conversation):
+        """An outage reported as 'no communities exist' would be a lie."""
+        conversation = make_conversation(
+            json_handler(ask_payload()),
+            communities=FakeCommunities(error=CommunityLookupError("down")),
+        )
+        reply = await conversation.handle(Channel.TELEGRAM, USER, "/communities manga")
+
+        assert "couldn't reach Reddit" in reply.body
+        assert "rather not guess" in reply.body
+        assert not reply.citations
 
 
 class TestRateLimiting:

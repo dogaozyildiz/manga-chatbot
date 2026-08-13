@@ -14,6 +14,8 @@ from enum import Enum
 class Channel(str, Enum):
     TELEGRAM = "telegram"
     WHATSAPP = "whatsapp"
+    DISCORD = "discord"
+    REDDIT = "reddit"
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,46 @@ class Citation:
     url: str | None = None
     quote: str = ""
     kind: str = ""
+
+
+@dataclass(frozen=True)
+class Community:
+    """A real subreddit, as returned by Reddit's search API.
+
+    Every field here comes off the wire — nothing is inferred and nothing is
+    generated. That is the whole point: the catalogue knows about series, not
+    about where people discuss them, so a suggested community is either looked
+    up or it is a guess, and this project does not guess.
+    """
+
+    name: str  # "manga", without the r/ prefix
+    subscribers: int
+    description: str
+    url: str
+
+    def as_citation(self) -> Citation:
+        """Render as a Citation so it flows through the existing formatter.
+
+        Suggestions then get the same dedupe, truncation, numbering and
+        per-channel markup as cited answers, with no parallel rendering path.
+        """
+        members = f"{_compact(self.subscribers)} members" if self.subscribers else ""
+        return Citation(
+            ref=f"reddit:{self.name}",
+            title=f"r/{self.name}" + (f" · {members}" if members else ""),
+            url=self.url,
+            quote=self.description,
+            kind="community",
+        )
+
+
+def _compact(n: int) -> str:
+    """1234 -> 1.2k, 2100000 -> 2.1M. Chat has no room for seven digits."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M".replace(".0M", "M")
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k".replace(".0k", "k")
+    return str(n)
 
 
 @dataclass
