@@ -39,13 +39,16 @@ class RagClient:
         *,
         timeout: float = 45.0,
         top_k: int | None = None,
+        api_key: str = "",
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._top_k = top_k
         # An injected client is how the tests drive this with MockTransport,
         # and how a caller shares a connection pool.
         self._client = client or httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), timeout=timeout
+            base_url=base_url.rstrip("/"),
+            timeout=timeout,
+            headers={"X-API-Key": api_key} if api_key else None,
         )
         self._owns_client = client is None
 

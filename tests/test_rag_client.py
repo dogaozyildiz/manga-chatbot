@@ -198,3 +198,19 @@ class TestHealth:
 
         rag = make_rag(handler)
         assert await rag.healthy() is False
+
+
+class TestApiKeyHeader:
+    """T6: the bot authenticates to a protected manhwa-rag."""
+
+    def test_key_is_sent_when_configured(self):
+        from bot.rag import RagClient
+
+        client = RagClient("http://rag.test", api_key="s3cret")
+        assert client._client.headers.get("X-API-Key") == "s3cret"
+
+    def test_no_header_when_unset(self):
+        from bot.rag import RagClient
+
+        client = RagClient("http://rag.test")
+        assert "X-API-Key" not in client._client.headers

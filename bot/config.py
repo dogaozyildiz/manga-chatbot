@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     # The RAG backend. Everything intelligent happens behind this URL.
     rag_url: str = "http://127.0.0.1:8000"
+    # Must match manhwa-rag API_KEY when the backend is protected.
+    rag_api_key: str = ""
     # Generous, because a `both` route against a 70B model can take several
     # seconds. Still finite: a user staring at a silent chat needs an answer or
     # an apology, not an open connection.
