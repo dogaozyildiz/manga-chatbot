@@ -20,7 +20,9 @@ Delivery-status callbacks arrive on the same webhook as `statuses` rather than
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import logging
 from collections import deque
 
@@ -126,6 +128,20 @@ def _get(container, key):
     return container.get(key) if isinstance(container, dict) else None
 
 
+def valid_signature(app_secret: str, body: bytes, header: str | None) -> bool:
+    """Check Meta's `X-Hub-Signature-256: sha256=<hex>` over the raw body.
+
+    The verify token only protects the GET handshake. Without this check the
+    POST endpoint accepts anything, so a forged request can act as any phone
+    number -- including `/stop`, which deletes that user's data. Constant-time
+    comparison; computed over the exact bytes received, before parsing.
+    """
+    if not app_secret or not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.removeprefix("sha256="))
+
+
 def build_router(
     services: Services, sender: WhatsAppSender, seen: SeenMessages | None = None
 ) -> APIRouter:
@@ -149,8 +165,15 @@ def build_router(
 
     @router.post("/webhook/whatsapp")
     async def receive(request: Request, background: BackgroundTasks):
+        raw = await request.body()
+        if not valid_signature(
+            settings.whatsapp_app_secret, raw, request.headers.get("x-hub-signature-256")
+        ):
+            # Not from Meta, so no retry semantics to respect.
+            log.warning("whatsapp webhook: missing or invalid signature, rejected")
+            return Response(status_code=401)
         try:
-            payload = await request.json()
+            payload = json.loads(raw)
         except Exception:
             # Still 200: a body we cannot parse will not parse on retry either.
             return Response(status_code=200)

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = ""
+    # Meta signs every webhook POST with this (X-Hub-Signature-256). Without it
+    # anyone who learns the URL can post messages as any phone number.
+    whatsapp_app_secret: str = ""
     whatsapp_api_version: str = "v21.0"
 
     discord_bot_token: str = ""
@@ -56,6 +59,8 @@ class Settings(BaseSettings):
             self.whatsapp_token
             and self.whatsapp_phone_number_id
             and self.whatsapp_verify_token
+            # Fail closed: no app secret, no webhook.
+            and self.whatsapp_app_secret
         )
 
     @property

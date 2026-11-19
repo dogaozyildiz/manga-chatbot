@@ -5,6 +5,8 @@ These are the parts with no Telegram equivalent, so they get their own tests.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from dataclasses import dataclass
 
 import httpx
@@ -78,9 +80,24 @@ def webhook(make_conversation, settings, sender):
     return app
 
 
-def client_for(app: FastAPI) -> httpx.AsyncClient:
+APP_SECRET = "test-app-secret"  # matches conftest.settings
+
+
+def sign(body: bytes, secret: str = APP_SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def client_for(app: FastAPI, *, signed: bool = True) -> httpx.AsyncClient:
+    """Test client that signs every request like Meta does (unless signed=False)."""
+
+    async def add_signature(request: httpx.Request) -> None:
+        if signed and request.method == "POST":
+            request.headers["X-Hub-Signature-256"] = sign(request.content)
+
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+        event_hooks={"request": [add_signature]},
     )
 
 
@@ -247,3 +264,50 @@ class TestSeenMessages:
         # accepted trade for a bounded window.
         assert seen.add_if_new("id-0") is True
         assert seen.add_if_new("id-9") is False
+
+
+class TestSignature:
+    """T7 in manhwa-rag docs/THREAT_MODEL.md: forged webhook POSTs."""
+
+    async def test_unsigned_request_is_rejected(self, webhook, sender):
+        async with client_for(webhook, signed=False) as client:
+            response = await client.post("/webhook/whatsapp", json=wa_payload("/stop"))
+        assert response.status_code == 401
+        assert sender.sent == []
+
+    async def test_wrong_secret_is_rejected(self, webhook, sender):
+        body = b'{"object":"whatsapp_business_account","entry":[]}'
+        async with client_for(webhook, signed=False) as client:
+            response = await client.post(
+                "/webhook/whatsapp",
+                content=body,
+                headers={"X-Hub-Signature-256": sign(body, "attacker-guess")},
+            )
+        assert response.status_code == 401
+
+    async def test_tampered_body_is_rejected(self, webhook, sender):
+        original = b'{"text":"hello"}'
+        async with client_for(webhook, signed=False) as client:
+            response = await client.post(
+                "/webhook/whatsapp",
+                content=b'{"text":"/stop"}',
+                headers={"X-Hub-Signature-256": sign(original)},
+            )
+        assert response.status_code == 401
+
+    async def test_malformed_header_is_rejected(self, webhook, sender):
+        async with client_for(webhook, signed=False) as client:
+            response = await client.post(
+                "/webhook/whatsapp", json=wa_payload(), headers={"X-Hub-Signature-256": "md5=abc"}
+            )
+        assert response.status_code == 401
+
+    async def test_valid_signature_is_answered(self, webhook, sender):
+        async with client_for(webhook) as client:
+            response = await client.post("/webhook/whatsapp", json=wa_payload("hello"))
+        assert response.status_code == 200
+        assert len(sender.sent) == 1
+
+    def test_webhook_is_not_configured_without_app_secret(self, settings):
+        assert settings.whatsapp_configured
+        assert not settings.model_copy(update={"whatsapp_app_secret": ""}).whatsapp_configured

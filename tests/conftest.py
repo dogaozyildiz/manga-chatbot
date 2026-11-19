@@ -184,6 +184,7 @@ def settings() -> Settings:
         whatsapp_token="test-token",
         whatsapp_phone_number_id="1234567890",
         whatsapp_verify_token="verify-me",
+        whatsapp_app_secret="test-app-secret",
         telegram_bot_token="",
         admin_chat_id="",
         database_url="sqlite+aiosqlite:///:memory:",
