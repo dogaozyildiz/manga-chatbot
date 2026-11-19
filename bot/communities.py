@@ -29,7 +29,7 @@ import httpx
 
 from bot.schema import Community
 
-TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
+TOKEN_URL = "https://www.reddit.com/api/v1/access_token"  # nosec B105  # endpoint URL, not a credential
 API_BASE = "https://oauth.reddit.com"
 # Refresh a little early rather than discovering expiry as a mid-request 401.
 TOKEN_SKEW_SECONDS = 60
@@ -45,7 +45,7 @@ class CommunityLookupError(RuntimeError):
 
 
 class RedditCommunities:
-    def __init__(
+    def __init__(  # nosec B107  # empty default = not configured; real values from settings
         self,
         client_id: str = "",
         client_secret: str = "",

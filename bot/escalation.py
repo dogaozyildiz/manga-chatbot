@@ -12,6 +12,7 @@ escalates when the system it trusts says it has nothing it can stand behind.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -19,6 +20,8 @@ import httpx
 from bot.config import Settings
 from bot.schema import RagAnswer
 from bot.store import Store
+
+log = logging.getLogger(__name__)
 
 Notifier = Callable[[str], Awaitable[None]]
 
@@ -83,5 +86,6 @@ class Escalator:
             )
         except Exception:
             # A failed operator notification must never break the user's reply.
-            # The row is already written, so nothing is actually lost.
-            pass
+            # The row is already written, so nothing is actually lost -- but the
+            # operator must be able to see that pushes are failing.
+            log.warning("escalation notification failed", exc_info=True)
