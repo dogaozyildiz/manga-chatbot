@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly: new CVEs are published against packages that have not changed.
+  schedule:
+    - cron: "23 5 * * 1"
 
 jobs:
   test:
@@ -22,3 +25,29 @@ jobs:
       # No backend, no database, no API keys: the RAG service is replaced by an
       # httpx MockTransport and the store is in-memory SQLite.
       - run: uv run pytest -q
+
+  security:
+    # Security gates. Any finding fails the build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks scans the full history
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - run: uv pip install -e ".[dev]" pip-audit bandit
+
+      - name: Dependency audit (known CVEs in pinned versions)
+        # Audits the lock file, i.e. exactly what was tested and what deploys.
+        run: uv run pip-audit -r requirements.lock --no-deps --disable-pip
+
+      - name: Static analysis (bandit)
+        run: uv run bandit -r bot -q
+
+      - name: Secret scan (gitleaks, full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

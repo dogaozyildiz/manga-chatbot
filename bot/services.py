@@ -24,6 +24,7 @@ class Services:
             self.settings.rag_url,
             timeout=self.settings.rag_timeout_seconds,
             top_k=self.settings.rag_top_k,
+            api_key=self.settings.rag_api_key,
         )
         self.store = Store(self.settings.database_url)
         self.escalator = Escalator(self.store)

@@ -81,7 +81,8 @@ def _make_handler(services: Services):
         try:
             await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
         except Exception:
-            pass
+            # Cosmetic only; never block the answer on it.
+            log.debug("typing indicator failed", exc_info=True)
 
         # Operator-visible traffic. Without it a successful message logs
         # nothing at all, and "handled fine" is indistinguishable from "never
@@ -129,4 +130,4 @@ async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Something broke on my side. It's logged — try again in a moment."
         )
     except Exception:
-        pass
+        log.warning("could not send error reply to telegram user", exc_info=True)

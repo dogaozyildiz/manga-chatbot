@@ -12,6 +12,8 @@ class Settings(BaseSettings):
 
     # The RAG backend. Everything intelligent happens behind this URL.
     rag_url: str = "http://127.0.0.1:8000"
+    # Must match manhwa-rag API_KEY when the backend is protected.
+    rag_api_key: str = ""
     # Generous, because a `both` route against a 70B model can take several
     # seconds. Still finite: a user staring at a silent chat needs an answer or
     # an apology, not an open connection.
@@ -28,6 +30,9 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = ""
+    # Meta signs every webhook POST with this (X-Hub-Signature-256). Without it
+    # anyone who learns the URL can post messages as any phone number.
+    whatsapp_app_secret: str = ""
     whatsapp_api_version: str = "v21.0"
 
     discord_bot_token: str = ""
@@ -56,6 +61,8 @@ class Settings(BaseSettings):
             self.whatsapp_token
             and self.whatsapp_phone_number_id
             and self.whatsapp_verify_token
+            # Fail closed: no app secret, no webhook.
+            and self.whatsapp_app_secret
         )
 
     @property

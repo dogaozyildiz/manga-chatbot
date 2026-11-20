@@ -183,4 +183,6 @@ async def _on_error(
         else:
             await interaction.response.send_message(message, ephemeral=True)
     except Exception:
-        pass
+        # The interaction may already have expired; the original error is
+        # logged above. Record this one too rather than swallowing it silently.
+        log.warning("could not send error reply to discord user", exc_info=True)
